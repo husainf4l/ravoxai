@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+asterisk-ami
+requests
+python-dotenv
+elevenlabs
+pydub
+pygame
+pyaudio
+wave
