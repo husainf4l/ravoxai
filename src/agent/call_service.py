@@ -11,7 +11,9 @@ from livekit.protocol.sip import CreateSIPParticipantRequest
 from livekit.protocol import room as room_proto
 import logging
 
-load_dotenv()
+# Load environment variables from config/.env
+env_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config', '.env')
+load_dotenv(env_path)
 logger = logging.getLogger(__name__)
 
 
@@ -65,6 +67,7 @@ async def make_sip_call(to_number: str, agent_name: str = "AI Assistant", subjec
         
         # Build metadata string with database call ID
         metadata_parts = [
+            f"phone_number:{to_number}",
             f"call_subject:{subject}",
             f"caller_name:{caller_name}",
             f"company_name:{company_name}",
@@ -73,6 +76,7 @@ async def make_sip_call(to_number: str, agent_name: str = "AI Assistant", subjec
         
         if db_call_id:
             metadata_parts.append(f"db_call_id:{db_call_id}")
+            metadata_parts.append(f"caller_id:{db_call_id}")  # Also include caller_id
         
         room_request = room_proto.CreateRoomRequest(
             name=room_name,

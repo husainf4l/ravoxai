@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Media Upload Test - AI Call Service</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #555;
+        }
+        input[type="text"], input[type="file"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        input[type="text"]:focus, input[type="file"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            flex: 1;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        .btn-secondary {
+            background: #f8f9fa;
+            color: #333;
+            border: 2px solid #e1e5e9;
+        }
+        .btn-secondary:hover {
+            background: #e9ecef;
+        }
+        .result {
+            margin-top: 30px;
+            padding: 20px;
+            border-radius: 8px;
+            display: none;
+        }
+        .result.success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .result.error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .media-status {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid #e1e5e9;
+        }
+        .status-item:last-child {
+            border-bottom: none;
+        }
+        .badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .badge.available {
+            background: #28a745;
+            color: white;
+        }
+        .badge.unavailable {
+            background: #dc3545;
+            color: white;
+        }
+        .link-btn {
+            background: #007bff;
+            color: white;
+            text-decoration: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 14px;
+            display: inline-block;
+            margin-left: 10px;
+        }
+        .link-btn:hover {
+            background: #0056b3;
+            text-decoration: none;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎵 Media Upload Test</h1>
+
+        <div class="form-group">
+            <label for="callId">Call ID:</label>
+            <input type="text" id="callId" placeholder="Enter call ID (e.g., abc123)" required>
+        </div>
+
+        <div class="form-group">
+            <label for="recordingFile">Recording File (MP3/WAV):</label>
+            <input type="file" id="recordingFile" accept="audio/*">
+        </div>
+
+        <div class="form-group">
+            <label for="transcriptFile">Transcript File (TXT):</label>
+            <input type="file" id="transcriptFile" accept=".txt">
+        </div>
+
+        <div class="button-group">
+            <button class="btn-primary" onclick="uploadMedia()">📤 Upload Media</button>
+            <button class="btn-secondary" onclick="checkMediaStatus()">📊 Check Status</button>
+        </div>
+
+        <div id="result" class="result"></div>
+
+        <div id="mediaStatus" class="media-status" style="display: none;">
+            <h3>📊 Media Status</h3>
+            <div id="statusContent"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+
+        async function uploadMedia() {
+            const callId = document.getElementById('callId').value.trim();
+            const recordingFile = document.getElementById('recordingFile').files[0];
+            const transcriptFile = document.getElementById('transcriptFile').files[0];
+
+            if (!callId) {
+                showResult('Please enter a Call ID', 'error');
+                return;
+            }
+
+            if (!recordingFile && !transcriptFile) {
+                showResult('Please select at least one file to upload', 'error');
+                return;
+            }
+
+            const resultDiv = document.getElementById('result');
+            resultDiv.style.display = 'block';
+            resultDiv.className = 'result';
+            resultDiv.innerHTML = '⏳ Uploading...';
+
+            try {
+                let uploadCount = 0;
+
+                // Upload recording
+                if (recordingFile) {
+                    const formData = new FormData();
+                    formData.append('file', recordingFile);
+                    formData.append('file_type', 'recording');
+
+                    const response = await fetch(`${API_BASE}/calls/${callId}/upload-media`, {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (response.ok) {
+                        uploadCount++;
+                        console.log('Recording uploaded successfully');
+                    } else {
+                        throw new Error(`Recording upload failed: ${response.status}`);
+                    }
+                }
+
+                // Upload transcript
+                if (transcriptFile) {
+                    const formData = new FormData();
+                    formData.append('file', transcriptFile);
+                    formData.append('file_type', 'transcript');
+
+                    const response = await fetch(`${API_BASE}/calls/${callId}/upload-media`, {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (response.ok) {
+                        uploadCount++;
+                        console.log('Transcript uploaded successfully');
+                    } else {
+                        throw new Error(`Transcript upload failed: ${response.status}`);
+                    }
+                }
+
+                showResult(`✅ Successfully uploaded ${uploadCount} file(s)!`, 'success');
+
+                // Refresh media status
+                setTimeout(() => checkMediaStatus(), 1000);
+
+            } catch (error) {
+                console.error('Upload error:', error);
+                showResult(`❌ Upload failed: ${error.message}`, 'error');
+            }
+        }
+
+        async function checkMediaStatus() {
+            const callId = document.getElementById('callId').value.trim();
+
+            if (!callId) {
+                showResult('Please enter a Call ID', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/calls/${callId}/media`);
+
+                if (response.status === 404) {
+                    showResult('Call not found', 'error');
+                    return;
+                }
+
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch media status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                displayMediaStatus(data);
+
+            } catch (error) {
+                console.error('Status check error:', error);
+                showResult(`❌ Status check failed: ${error.message}`, 'error');
+            }
+        }
+
+        function displayMediaStatus(data) {
+            const statusDiv = document.getElementById('mediaStatus');
+            const contentDiv = document.getElementById('statusContent');
+
+            let html = `
+                <div class="status-item">
+                    <span>🎵 Recording Available:</span>
+                    <span class="badge ${data.recording_available ? 'available' : 'unavailable'}">
+                        ${data.recording_available ? 'YES' : 'NO'}
+                    </span>
+                </div>
+                <div class="status-item">
+                    <span>📝 Transcript Available:</span>
+                    <span class="badge ${data.transcript_available ? 'available' : 'unavailable'}">
+                        ${data.transcript_available ? 'YES' : 'NO'}
+                    </span>
+                </div>
+                <div class="status-item">
+                    <span>⏱️ Duration:</span>
+                    <span>${data.duration_seconds ? data.duration_seconds + 's' : 'N/A'}</span>
+                </div>
+                <div class="status-item">
+                    <span>🎯 Call Status:</span>
+                    <span>${data.call_status || 'N/A'}</span>
+                </div>
+            `;
+
+            if (data.recording_url) {
+                html += `
+                    <div class="status-item">
+                        <span>🔗 Recording URL:</span>
+                        <a href="${data.recording_url}" target="_blank" class="link-btn">🎵 Play</a>
+                    </div>
+                `;
+            }
+
+            if (data.transcript_url) {
+                html += `
+                    <div class="status-item">
+                        <span>🔗 Transcript URL:</span>
+                        <a href="${data.transcript_url}" target="_blank" class="link-btn">📝 View</a>
+                    </div>
+                `;
+            }
+
+            contentDiv.innerHTML = html;
+            statusDiv.style.display = 'block';
+        }
+
+        function showResult(message, type) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.style.display = 'block';
+            resultDiv.className = `result ${type}`;
+            resultDiv.innerHTML = message;
+        }
+
+        // Auto-check status when call ID changes
+        document.getElementById('callId').addEventListener('input', function() {
+            const callId = this.value.trim();
+            if (callId.length > 3) { // Only check if ID is reasonably long
+                setTimeout(() => {
+                    if (this.value.trim() === callId) {
+                        checkMediaStatus();
+                    }
+                }, 500);
+            }
+        });
+    </script>
+</body>
+</html>

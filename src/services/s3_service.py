@@ -1,7 +1,18 @@
 """
-AWS S3 Media Storage Service
-Handles uploading and managing call recordings and media files
+S3 Media Service for handling call recordings and transcripts
 """
+
+import os
+import boto3
+import logging
+from dotenv import load_dotenv
+from botocore.exceptions import ClientError, NoCredentialsError
+import mimetypes
+
+# Load environment variables from config/.env
+env_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config', '.env')
+load_dotenv(env_path)
+logger = logging.getLogger(__name__)
 
 import boto3
 import os
@@ -11,7 +22,7 @@ from dotenv import load_dotenv
 from botocore.exceptions import ClientError, NoCredentialsError
 import mimetypes
 
-load_dotenv()
+load_dotenv(dotenv_path="../../config/.env")
 logger = logging.getLogger(__name__)
 
 

@@ -1,5 +1,19 @@
 """
-Clean Agent Main Entry Point
+Cleimport logging
+import os
+from dotenv import load_dotenv
+from livekit.agents import JobContext, AgentSession, cli, WorkerOptions
+from .call_agent import CallAgent
+
+# Load environment variables from config/.env
+env_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config', '.env')
+load_dotenv(env_path)
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s",
+) Entry Point
 Minimal implementation for AI call agent
 """
 
@@ -8,10 +22,10 @@ import logging
 import os
 from dotenv import load_dotenv
 from livekit.agents import JobContext, AgentSession, cli, WorkerOptions
-from call_agent import CallAgent
+from .call_agent import CallAgent
 
 # Load environment variables
-load_dotenv()
+load_dotenv(dotenv_path="../../config/.env")
 
 # Configure logging
 logging.basicConfig(

@@ -10,7 +10,9 @@ import uuid
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load environment variables from config/.env
+env_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config', '.env')
+load_dotenv(env_path)
 
 Base = declarative_base()
 

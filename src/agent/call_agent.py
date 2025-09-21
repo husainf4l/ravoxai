@@ -5,8 +5,8 @@ from datetime import datetime
 from livekit.agents import JobContext
 from livekit.agents.voice import Agent
 from livekit.plugins import google, silero
-from database import CallRecord, SessionLocal
-from s3_service import get_s3_service
+from src.database.database import CallRecord, SessionLocal
+from src.services.s3_service import get_s3_service
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +150,35 @@ class CallAgent:
             self.logger.error(f"Error updating call record: {e}")
     
     async def on_enter(self):
-        await self.start()
+        """Enhanced on_enter with better error handling and recovery"""
+        try:
+            await self.start()
+            self.logger.info("✅ Agent started successfully")
+            
+        except Exception as start_error:
+            self.logger.error(f"❌ Failed to start agent: {start_error}")
+            # Try to create a minimal call record for tracking
+            try:
+                if not self.call_record and self.db_session:
+                    self.call_record = CallRecord(
+                        status="failed",
+                        phone_number="unknown",
+                        caller_name="unknown",
+                        agent_name="AI Assistant",
+                        company_name="AI Call Service",
+                        subject="Agent startup failed",
+                        main_prompt="Agent failed to start",
+                        started_at=datetime.utcnow(),
+                        ended_at=datetime.utcnow()
+                    )
+                    self.db_session.add(self.call_record)
+                    self.db_session.commit()
+                    self.logger.info(f"✅ Created failure record: {self.call_record.id}")
+            except Exception as record_error:
+                self.logger.error(f"❌ Failed to create failure record: {record_error}")
+            
+            # Re-raise the original error
+            raise start_error
         
         # Get metadata from JobContext (more reliable than room metadata)
         metadata = getattr(self.ctx._info.accept_arguments, 'metadata', '{}') or "{}"
@@ -163,7 +191,7 @@ class CallAgent:
                 metadata = room_metadata
                 self.logger.info(f"Agent - Using room metadata as fallback: '{metadata}' (length: {len(metadata)})")
 
-        # Parse metadata and extract all fields
+        # Parse metadata and extract all fields with enhanced error handling
         call_metadata = {}
         if metadata and metadata.strip() and metadata != "{}":
             try:
@@ -193,13 +221,31 @@ class CallAgent:
                             call_metadata['main_prompt'] = base64.b64decode(call_metadata['main_prompt']).decode('utf-8')
                         except Exception as decode_error:
                             self.logger.warning(f"Failed to decode main_prompt: {decode_error}")
+                            call_metadata['main_prompt'] = "Default conversation prompt"
                     
                     self.logger.info(f"Agent - Successfully parsed pipe-separated metadata: {call_metadata}")
             except Exception as e:
                 self.logger.error(f"Failed to parse metadata: {e}")
                 self.logger.error(f"Metadata content: '{metadata}'")
+                # Use default values
+                call_metadata = {
+                    'caller_name': 'Unknown Caller',
+                    'agent_name': 'AI Assistant',
+                    'company_name': 'AI Call Service',
+                    'subject': 'General conversation',
+                    'main_prompt': 'Please have a conversation with the caller.',
+                    'caller_id': 'system-default'
+                }
         else:
-            self.logger.info("No metadata provided or metadata is empty")        # Extract individual fields with defaults
+            self.logger.info("No metadata provided or metadata is empty - using defaults")
+            call_metadata = {
+                'caller_name': 'Unknown Caller',
+                'agent_name': 'AI Assistant', 
+                'company_name': 'AI Call Service',
+                'subject': 'General conversation',
+                'main_prompt': 'Please have a conversation with the caller.',
+                'caller_id': 'system-default'
+            }        # Extract individual fields with defaults
         caller_name = call_metadata.get("caller_name", "")
         agent_name = call_metadata.get("agent_name", "Ash")  # Default to "Ash" as requested
         company_name = call_metadata.get("company_name", "Rolevate")  # Default to "Rolevate"
@@ -286,48 +332,103 @@ Be proactive - drive the conversation yourself.""",
             self.logger.info(f"Fallback greeting: {initial_greeting}")
     
     async def cleanup(self):
-        try:
-            if self.call_record and self.call_record.status not in ["completed", "failed"]:
-                self.call_record.status = "completed"
-                self.call_record.ended_at = datetime.utcnow()
+        """Enhanced cleanup with error recovery and retries"""
+        max_retries = 3
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                # Update call record status if needed
+                if self.call_record and self.call_record.status not in ["completed", "failed", "timeout"]:
+                    self.call_record.status = "completed"
+                    self.call_record.ended_at = datetime.utcnow()
+                    
+                    if self.call_record.started_at and self.call_record.ended_at:
+                        duration = (self.call_record.ended_at - self.call_record.started_at).total_seconds()
+                        self.call_record.duration_seconds = int(duration)
+                    
+                    self.db_session.commit()
+                    self.logger.info(f"✅ Cleaned up call record {self.call_record.id}")
                 
-                if self.call_record.started_at and self.call_record.ended_at:
-                    duration = (self.call_record.ended_at - self.call_record.started_at).total_seconds()
-                    self.call_record.duration_seconds = int(duration)
+                # Close database session
+                if self.db_session:
+                    self.db_session.close()
+                    self.logger.info("✅ Database session closed")
                 
-                self.db_session.commit()
-                self.logger.info(f"Cleaned up call record {self.call_record.id}")
-            
-            if self.db_session:
-                self.db_session.close()
+                # Clean up S3 resources if needed
+                if self.s3_service and self.call_record:
+                    try:
+                        # Any S3 cleanup operations could go here
+                        pass
+                    except Exception as s3_error:
+                        self.logger.warning(f"S3 cleanup warning: {s3_error}")
                 
-        except Exception as e:
-            self.logger.error(f"Error during cleanup: {e}")
+                break  # Success, exit retry loop
+                
+            except Exception as e:
+                retry_count += 1
+                self.logger.error(f"❌ Cleanup error (attempt {retry_count}/{max_retries}): {e}")
+                
+                if retry_count < max_retries:
+                    await asyncio.sleep(1)  # Wait 1 second before retry
+                else:
+                    self.logger.error("❌ Cleanup failed after all retries")
+                    
+                    # Emergency cleanup - try to close session without committing
+                    try:
+                        if self.db_session:
+                            self.db_session.close()
+                    except:
+                        pass
 
 
 async def agent_entry_point(ctx: JobContext):
-    """Entry point for the agent with proper cleanup"""
+    """Enhanced entry point for the agent with comprehensive error handling and recovery"""
     agent_instance = None
-    try:
-        # Create and start the agent
-        agent_instance = CallAgent(ctx)
-        await agent_instance.on_enter()
-        
-        # Keep the agent running - don't try to use AgentSession
-        # The agent handles everything internally through the realtime model
-        
-    except Exception as e:
-        logger.error(f"Agent error: {e}")
-        if agent_instance and agent_instance.call_record and agent_instance.db_session:
-            try:
-                agent_instance.call_record.status = "failed"
-                agent_instance.db_session.commit()
-            except Exception:
-                pass
+    max_retries = 2
+    retry_count = 0
     
-    finally:
+    while retry_count <= max_retries:
+        try:
+            logger.info(f"🚀 Starting agent (attempt {retry_count + 1}/{max_retries + 1})")
+            
+            # Create and start the agent
+            agent_instance = CallAgent(ctx)
+            await agent_instance.on_enter()
+            
+            # Keep the agent running - don't try to use AgentSession
+            # The agent handles everything internally through the realtime model
+            logger.info("✅ Agent running successfully")
+            break  # Success, exit retry loop
+            
+        except Exception as e:
+            retry_count += 1
+            logger.error(f"❌ Agent error (attempt {retry_count}/{max_retries + 1}): {e}")
+            
+            # Try to update call record with failure status
+            if agent_instance and agent_instance.call_record and agent_instance.db_session:
+                try:
+                    agent_instance.call_record.status = "failed"
+                    agent_instance.call_record.error_message = str(e)
+                    agent_instance.db_session.commit()
+                    logger.info(f"✅ Updated call record with failure status: {agent_instance.call_record.id}")
+                except Exception as record_error:
+                    logger.error(f"❌ Failed to update call record: {record_error}")
+            
+            if retry_count <= max_retries:
+                logger.info(f"🔄 Retrying agent startup in 5 seconds...")
+                await asyncio.sleep(5)
+            else:
+                logger.error("❌ Agent failed after all retry attempts")
+                raise e
+        
+        # Always cleanup
         if agent_instance:
-            await agent_instance.cleanup()
+            try:
+                await agent_instance.cleanup()
+                logger.info("✅ Agent cleanup completed")
+            except Exception as cleanup_error:
+                logger.error(f"❌ Agent cleanup error: {cleanup_error}")
 
 
 if __name__ == "__main__":

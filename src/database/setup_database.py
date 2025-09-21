@@ -11,7 +11,7 @@ import asyncio
 from dotenv import load_dotenv
 from database import create_tables, get_database_url
 
-load_dotenv()
+load_dotenv(dotenv_path="../../config/.env")
 
 async def create_database_if_not_exists():
     """Create the database if it doesn't exist"""
