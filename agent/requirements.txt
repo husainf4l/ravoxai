@@ -1,0 +1,29 @@
+# AI Call Agent - Requirements
+# Clean minimal version for production deployment
+
+# Core LiveKit agents framework
+livekit-agents[beta]==1.2.11
+
+# Google Real-time model support
+livekit-plugins-google
+
+# Voice Activity Detection
+livekit-plugins-silero
+
+# FastAPI for REST endpoints
+fastapi
+uvicorn[standard]
+
+# Database - PostgreSQL
+sqlalchemy
+psycopg2-binary
+asyncpg  # For database setup script
+
+# AWS S3 for media storage
+boto3
+
+# Environment management
+python-dotenv
+
+# Additional utilities
+pydantic

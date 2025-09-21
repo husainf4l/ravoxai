@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Call Records Dashboard</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .refresh-btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-bottom: 20px;
+        }
+        .refresh-btn:hover {
+            background: #0056b3;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background-color: #f8f9fa;
+            font-weight: bold;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        .status {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .status.completed {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status.connecting {
+            background: #fff3cd;
+            color: #856404;
+        }
+        .status.failed {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .status.initiated {
+            background: #cce7ff;
+            color: #004085;
+        }
+        .recording-link {
+            color: #007bff;
+            text-decoration: none;
+        }
+        .recording-link:hover {
+            text-decoration: underline;
+        }
+        .no-recording {
+            color: #6c757d;
+            font-style: italic;
+        }
+        .transcript {
+            max-width: 300px;
+            max-height: 100px;
+            overflow: auto;
+            font-size: 12px;
+            background: #f8f9fa;
+            padding: 8px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 AI Call Records Dashboard</h1>
+        
+        <button class="refresh-btn" onclick="loadCalls()">🔄 Refresh</button>
+        
+        <div id="loading" style="text-align: center; padding: 20px; display: none;">
+            Loading call records...
+        </div>
+        
+        <div id="error" style="color: red; padding: 20px; display: none;"></div>
+        
+        <table id="callsTable" style="display: none;">
+            <thead>
+                <tr>
+                    <th>Call ID</th>
+                    <th>Phone Number</th>
+                    <th>Caller</th>
+                    <th>Agent</th>
+                    <th>Subject</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th>Duration</th>
+                    <th>Recording</th>
+                    <th>Transcript</th>
+                </tr>
+            </thead>
+            <tbody id="callsTableBody">
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        
+        async function loadCalls() {
+            const loading = document.getElementById('loading');
+            const error = document.getElementById('error');
+            const table = document.getElementById('callsTable');
+            
+            loading.style.display = 'block';
+            error.style.display = 'none';
+            table.style.display = 'none';
+            
+            try {
+                const response = await fetch(`${API_BASE}/calls`);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const calls = await response.json();
+                displayCalls(calls);
+                
+                loading.style.display = 'none';
+                table.style.display = 'table';
+                
+            } catch (err) {
+                console.error('Error loading calls:', err);
+                error.textContent = `Failed to load calls: ${err.message}`;
+                error.style.display = 'block';
+                loading.style.display = 'none';
+            }
+        }
+        
+        function displayCalls(calls) {
+            const tbody = document.getElementById('callsTableBody');
+            tbody.innerHTML = '';
+            
+            calls.forEach(call => {
+                const row = document.createElement('tr');
+                
+                // Format duration
+                const duration = call.duration_seconds 
+                    ? `${Math.floor(call.duration_seconds / 60)}:${(call.duration_seconds % 60).toString().padStart(2, '0')}`
+                    : '-';
+                
+                // Format date
+                const createdAt = new Date(call.created_at).toLocaleDateString() + ' ' + 
+                                 new Date(call.created_at).toLocaleTimeString();
+                
+                // Recording link or status
+                const recordingCell = call.recording_url 
+                    ? `<a href="${call.recording_url}" class="recording-link" target="_blank">🎧 Play Recording</a>`
+                    : call.recording_s3_key 
+                    ? `<button onclick="getSecureRecording('${call.call_id}')" class="recording-link" style="border:none;background:none;color:#007bff;cursor:pointer;">🔒 Get Secure Link</button>`
+                    : '<span class="no-recording">No recording</span>';
+                
+                // Add transcript link if available
+                const transcriptLink = call.transcript_url 
+                    ? ` | <a href="${call.transcript_url}" class="recording-link" target="_blank">📄 Transcript</a>`
+                    : '';
+                
+                const mediaCell = recordingCell + transcriptLink;
+                
+                // Transcript preview
+                const transcript = call.conversation_transcript 
+                    ? `<div class="transcript">${call.conversation_transcript.substring(0, 200)}${call.conversation_transcript.length > 200 ? '...' : ''}</div>`
+                    : '-';
+                
+                row.innerHTML = `
+                    <td>${call.call_id}</td>
+                    <td>${call.phone_number}</td>
+                    <td>${call.caller_name}</td>
+                    <td>${call.agent_name}</td>
+                    <td>${call.subject}</td>
+                    <td><span class="status ${call.status}">${call.status}</span></td>
+                    <td>${createdAt}</td>
+                    <td>${duration}</td>
+                    <td>${mediaCell}</td>
+                    <td>${transcript}</td>
+                `;
+                
+                tbody.appendChild(row);
+            });
+        }
+        
+        // Function to get secure recording URL
+        async function getSecureRecording(callId) {
+            try {
+                const response = await fetch(`${API_BASE}/calls/${callId}/recording-url`);
+                if (!response.ok) {
+                    throw new Error('Failed to get secure recording URL');
+                }
+                
+                const data = await response.json();
+                // Open recording in new tab
+                window.open(data.recording_url, '_blank');
+                
+            } catch (err) {
+                alert(`Failed to get recording: ${err.message}`);
+            }
+        }
+        
+        // Load calls when page loads
+        document.addEventListener('DOMContentLoaded', loadCalls);
+    </script>
+</body>
+</html>
