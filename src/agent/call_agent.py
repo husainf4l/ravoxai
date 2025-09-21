@@ -1,10 +1,12 @@
 import logging
 import json
 import asyncio
+import os
 from datetime import datetime
 from livekit.agents import JobContext
 from livekit.agents.voice import Agent
 from livekit.plugins import google, silero
+from livekit import api
 from src.database.database import CallRecord, SessionLocal
 from src.services.s3_service import get_s3_service
 
@@ -19,6 +21,8 @@ class CallAgent:
         self.s3_service = get_s3_service()
         self.db_session = None
         self.label = "AI Call Agent"  # Add required label attribute
+        self.recording_task = None  # Track recording task
+        self.room_composite = None  # Track room composite for recording
     
     async def start(self):
         try:
@@ -30,6 +34,10 @@ class CallAgent:
                 self.ctx.room.on("participant_connected", self._on_participant_connected)
                 self.ctx.room.on("participant_disconnected", self._on_participant_disconnected)
                 self.logger.info(f"CallAgent started for room {self.ctx.room.name} - Call ID: {self.call_record.id}")
+                
+                # Start recording immediately for outbound calls
+                if not self.recording_task:
+                    asyncio.create_task(self._start_recording())
             else:
                 self.logger.info(f"CallAgent started for room {self.ctx.room.name} - No database record")
             
@@ -146,6 +154,10 @@ class CallAgent:
                 
                 self.db_session.commit()
                 self.logger.info(f"Participant disconnected - Updated call {self.call_record.id}")
+                
+                # Stop recording and upload
+                if self.recording_task:
+                    asyncio.create_task(self._stop_recording())
         except Exception as e:
             self.logger.error(f"Error updating call record: {e}")
     
@@ -330,6 +342,127 @@ Be proactive - drive the conversation yourself.""",
             # Fallback to simple text-based interaction
             self.logger.info("Using fallback text-based interaction")
             self.logger.info(f"Fallback greeting: {initial_greeting}")
+    
+    async def _start_recording(self):
+        """Start recording the call using egress"""
+        try:
+            if not self.call_record:
+                self.logger.warning("No call record available for recording")
+                return
+            
+            self.logger.info(f"🎵 Starting recording for call {self.call_record.call_id}")
+            
+            # Import LiveKit egress functionality
+            from livekit import api
+            from livekit.api import RoomCompositeEgressRequest, EncodedFileOutput, S3Upload
+            
+            # Get LiveKit API credentials
+            api_key = os.getenv("LIVEKIT_API_KEY")
+            api_secret = os.getenv("LIVEKIT_API_SECRET")
+            livekit_url = os.getenv("LIVEKIT_URL", "https://widdai-aphl2lb9.livekit.cloud")
+            
+            if not api_key or not api_secret:
+                self.logger.error("LiveKit API credentials not found")
+                return
+            
+            # Create LiveKit API client
+            lk_api = api.LiveKitAPI(url=livekit_url, api_key=api_key, api_secret=api_secret)
+            
+            # Configure S3 upload for recording
+            s3_upload = S3Upload(
+                access_key=os.getenv("AWS_ACCESS_KEY_ID"),
+                secret=os.getenv("AWS_SECRET_ACCESS_KEY"),
+                region=os.getenv("AWS_REGION", "me-central-1"),
+                bucket=os.getenv("AWS_BUCKET_NAME", "4wk-garage-media")
+            )
+            
+            # Create file output with S3 destination
+            file_output = EncodedFileOutput(
+                s3=s3_upload,
+                filepath=f"call-recordings/{self.call_record.call_id}.mp3"
+            )
+            
+            # Start room composite egress (recording)
+            request = RoomCompositeEgressRequest(
+                room_name=self.ctx.room.name,
+                file=file_output,
+                audio_only=True  # Record audio only for call recordings
+            )
+            
+            response = await lk_api.egress.start_room_composite_egress(request)
+            egress_id = response.egress_id
+            
+            # Update database with egress ID
+            self.call_record.recording_sid = egress_id
+            self.db_session.commit()
+            
+            self.logger.info(f"✅ Recording started: {egress_id}")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Failed to start recording: {e}")
+            import traceback
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
+    
+    async def _stop_recording(self):
+        """Stop recording and get the S3 URL"""
+        try:
+            if not self.call_record or not self.call_record.recording_sid:
+                self.logger.warning("No active recording to stop")
+                return
+            
+            self.logger.info(f"🛑 Stopping recording for call {self.call_record.call_id}")
+            
+            # Import LiveKit egress functionality
+            from livekit import api
+            from livekit.api import StopEgressRequest
+            
+            # Get LiveKit API credentials
+            api_key = os.getenv("LIVEKIT_API_KEY")
+            api_secret = os.getenv("LIVEKIT_API_SECRET")
+            livekit_url = os.getenv("LIVEKIT_URL", "https://widdai-aphl2lb9.livekit.cloud")
+            
+            if not api_key or not api_secret:
+                self.logger.error("LiveKit API credentials not found")
+                return
+            
+            # Create LiveKit API client
+            lk_api = api.LiveKitAPI(url=livekit_url, api_key=api_key, api_secret=api_secret)
+            
+            # Stop egress (recording)
+            request = StopEgressRequest(egress_id=self.call_record.recording_sid)
+            response = await lk_api.egress.stop_egress(request)
+            
+            self.logger.info(f"✅ Recording stopped: {self.call_record.recording_sid}")
+            
+            # Wait a moment for the recording to be processed and uploaded
+            await asyncio.sleep(3)
+            
+            # Get the S3 URL from the egress info
+            if response.info and response.info.file_results:
+                file_result = response.info.file_results[0]
+                if file_result.filename:
+                    # Construct S3 URL
+                    bucket = os.getenv("AWS_BUCKET_NAME", "4wk-garage-media")
+                    region = os.getenv("AWS_REGION", "me-central-1")
+                    s3_url = f"https://{bucket}.s3.{region}.amazonaws.com/{file_result.filename}"
+                    
+                    # Update database with S3 information
+                    self.call_record.recording_url = s3_url
+                    self.call_record.recording_s3_key = file_result.filename
+                    self.call_record.recording_available = True
+                    self.call_record.recording_format = 'mp3'
+                    self.db_session.commit()
+                    
+                    self.logger.info(f"✅ Recording uploaded to S3: {s3_url}")
+                else:
+                    self.logger.warning("No filename in egress result")
+            else:
+                self.logger.warning("No file results in egress response")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Failed to stop recording: {e}")
+            import traceback
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
     
     async def cleanup(self):
         """Enhanced cleanup with error recovery and retries"""

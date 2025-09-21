@@ -683,7 +683,7 @@ async def upload_call_media(
         if file_type == "recording":
             if file_path and os.path.exists(file_path):
                 # Upload from local file
-                upload_result = s3_service.upload_recording(call_id, file_path)
+                upload_result = s3_service.upload_recording(file_path, call_id)
             elif s3_key:
                 # Just update the S3 key reference
                 upload_result = {"s3_key": s3_key, "url": s3_service.get_recording_url(s3_key)}
@@ -692,14 +692,16 @@ async def upload_call_media(
 
             # Update call record
             call.recording_available = True
-            call.recording_url = upload_result["url"]
+            call.recording_url = upload_result["s3_url"]
             call.recording_s3_key = upload_result["s3_key"]
             call.recording_format = upload_result.get("format", "mp3")
 
         elif file_type == "transcript":
             if file_path and os.path.exists(file_path):
-                # Upload from local file
-                upload_result = s3_service.upload_transcript(call_id, file_path)
+                # Read file content and upload
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    transcript_content = f.read()
+                upload_result = s3_service.upload_transcript(transcript_content, call_id)
             elif s3_key:
                 # Just update the S3 key reference
                 upload_result = {"s3_key": s3_key, "url": s3_service.get_transcript_url(s3_key)}
@@ -708,7 +710,7 @@ async def upload_call_media(
 
             # Update call record
             call.transcript_available = True
-            call.transcript_url = upload_result["url"]
+            call.transcript_url = upload_result["s3_url"]
             call.transcript_s3_key = upload_result["s3_key"]
 
         else:
